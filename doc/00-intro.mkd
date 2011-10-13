@@ -1,0 +1,42 @@
+# Introducing Jacquard
+
+Around the beginning of 2010, I started a project that I eventually
+ended up calling [App::StatusSkein][statusskein]. The idea was to
+provide reading and posting access to a variety of social networks
+from a single unified location. As these personal projects will, it
+grew to the point where it was tolerable for my primary use for it,
+and my desire to develop it further slackened. I had placed some (in
+retrospect) odd design constraints on it -- I was trying to not have a
+backing database at all, to only run locally, and to only keep a
+certain minimal amount of state loaded at any given time. After the
+initial page load, all the interaction between the web browser and the
+server was AJAX-based, and reloading the page would reset the state to
+the initial default. Parts of this worked well; parts of it... just
+worked, but all in all, it was successful at scratching the itch I had
+at the time.
+
+Now, I've got a different itch -- same general area, but different
+design constraints. Now that I've got an iPad, it would be nice to
+have something similar to StatusSkein, but server-based, able to keep
+track of where in the timeline I'd last left off reading, able to save
+posts for later, and able to track precisely which posts I've read and
+which I haven't, regardless of what location I accessed them from --
+something like a mashup of the UI of Google Reader and the current
+StatusSkein. Technology-wise, I'd also like a chance to play around
+with a [Catalyst][catalyst] app that uses [KiokuDB][kioku] instead of
+the usual (for me) [DBIx::Class][dbic]. It would also be nice if I had
+a better way of maintaining my interest in the development of this app
+beyond the initial "hey, this itches!" stage. The ideal way to do that
+is to get users. Failing that, perhaps _readers_ will provide some
+motivation...
+
+So, welcome to what is hopefully the first in a series of posts
+outlining bite-sized bits of coding and other noddling around as I
+work on developing this new trans-social network app that I'm
+currently calling [Jacquard][jacquard]...
+
+[catalyst]: https://metacpan.org/module/Catalyst
+[dbic]: https://metacpan.org/module/DBIx::Class
+[jacquard]: https://github.com/genehack/Jacquard
+[kioku]: http://www.iinteractive.com/kiokudb/
+[statusskein]: http://github.com/genehack/app-status-skein
