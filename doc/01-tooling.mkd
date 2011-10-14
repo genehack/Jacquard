@@ -1,0 +1,138 @@
+Okay, first step is to get some tooling in place to make it easier to
+deal with developing this thing. Since I'm expecting to work on this
+for a while, and will probably end releasing the code on [CPAN][cpan],
+it makes sense to invest a little up front effort on making testing
+and releasing the code easier.
+
+Item the first: a [Dist::Zilla][dzil] config. If you're not familiar
+with Dist::Zilla, it's a set of tools to make it easier to write Perl
+code with an eye towards distributing it on CPAN. There's more info at
+the Dist::Zilla site.
+
+Since I've been using dzil for a while, I've taken the step of
+uploading my own [plugin bundle][dzilgenehack] to CPAN -- so my
+<code>dist.ini</code> file to configure Dist::Zilla is pretty
+straightforward:
+
+    name    = Jacquard
+    author  = John SJ Anderson <genehack@genehack.org>
+    license = Perl_5
+    copyright_holder = John SJ Anderson <genehack@genehack.org>
+    copyright_year   = 2011
+    
+    [@GENEHACK]
+
+The intro boilerplate is pretty self-explanatory, and all that last
+line says is "use my standard plugins and settings."
+
+Item the second: [Test::Class][testclass] tooling. I've been using the
+OO-ish approach to writing tests for a while now and I find it very
+convenient. I'm not going to try to explain how it works, since Ovid
+has already written a very nice series of articles over on
+[Modern Perl Books][modperbooks] about this module: 
+
+* [Organizing Test Suites with Test::Class][testclass1]
+* [Reusing Test Code with Test::Class][testclass2]
+* [Making Your Testing Life Easier][testclass3]
+* [Using Test Control Methods with Test::Class][testclass4]
+* [Working with Test::Class Test Suites][testclass5]
+
+To make it easier to use we're just going to create a test helper to
+run all our Test::Class tests -- this will go in a file called
+<code>t/01-run.t</code>:
+
+    #! perl
+    use strict;
+    use warnings;
+    use Test::Class::Load qw<t/lib>;
+
+All that does is automatically find all our testing libraries under
+<code>t/lib</code> and automatically run each one in turn. We're also
+going to create a testing base class at
+<code>t/lib/Test/BASE.pm</code> that all our test libraries will
+inherit from:
+
+    package Test::BASE;
+    use parent 'Test::Class';
+    
+    INIT { Test::Class->runtests }
+    
+    1;
+
+This is done so that individual test libraries will do the right thing
+when run with the <code>prove</code> tool -- more about that in a
+later installment. 
+
+Item the third: a top level library file. This isn't strictly needed,
+and isn't going to contain any code, but I always like to have a
+module file that matches the name of the distribution. So we'll put
+this into <code>lib/Jacquard.pm</code>:
+
+    package Jacquard;
+    # ABSTRACT: Jacquard is a social network and RSS feed aggregator.
+    1;
+
+For the moment, let's make sure things are "working" as expected:
+
+    <Jacquard:/> $ dzil test
+    [DZ] building test distribution under .build/EkNRq3jF7V
+    [DZ] beginning to build Jacquard
+    [DZ] guessing dist's main_module is lib/Jacquard.pm
+    [DZ] extracting distribution abstract from lib/Jacquard.pm
+    [@GENEHACK/@Basic/ExtraTests] rewriting release test xt/release/pod-coverage.t
+    [@GENEHACK/@Basic/ExtraTests] rewriting release test xt/release/pod-syntax.t
+    [@GENEHACK/@Basic/ExtraTests] rewriting release test xt/release/eol.t
+    [@GENEHACK/@Basic/ExtraTests] rewriting release test xt/release/kwalitee.t
+    [DZ] Override README from [ReadmeFromPod]
+    [DZ] writing Jacquard in .build/EkNRq3jF7V
+    Checking if your kit is complete...
+    Looks good
+    Writing Makefile for Jacquard
+    Writing MYMETA.yml and MYMETA.json
+    cp lib/Jacquard.pm blib/lib/Jacquard.pm
+    Manifying blib/man3/Jacquard.3
+    PERL_DL_NONLAZY=1 /opt/perl-5.14.2/bin/perl "-MExtUtils::Command::MM" "-e" "test_harness(0, 'blib/li    b', 'blib/arch')" t/*.t
+    t/00-compile.t ............ ok   
+    t/01-run.t ................ No subtests run 
+    t/release-eol.t ........... skipped: these tests are for release candidate testing
+    t/release-kwalitee.t ...... skipped: these tests are for release candidate testing
+    t/release-pod-coverage.t .. skipped: these tests are for release candidate testing
+    t/release-pod-syntax.t .... skipped: these tests are for release candidate testing
+    
+    Test Summary Report
+    -------------------
+    t/01-run.t              (Wstat: 0 Tests: 0 Failed: 0)
+      Parse errors: No plan found in TAP output
+    Files=6, Tests=1,  0 wallclock secs ( 0.04 usr  0.02 sys +  0.17 cusr  0.03 csys =  0.26 CPU)
+    Result: FAIL
+    Failed 1/6 test programs. 0/1 subtests failed.
+    make: *** [test_dynamic] Error 255
+    error running make test
+
+And since we haven't actually _written_ any tests yet, that's about
+what we should expect. That's a good place to stop and commit what
+we've done so far:
+
+    [master]<Jacquard:/> $ git add dist.ini t/01-run.t t/lib/Test/BASE.pm lib/Jacquard.pm
+    
+    [master 6cd7634] Set up basic dist.init, Test::Class tooling, and lib/Jacquard.pm
+     4 files changed, 132 insertions(+), 0 deletions(-)
+     create mode 100644 dist.ini
+     create mode 100644 lib/Jacquard.pm
+     create mode 100755 t/01-run.t
+     create mode 100644 t/lib/Test/BASE.pm
+
+and a good place to stop for the moment. Next time we'll write some
+_real_ code, and start figuring out how this thing is actually going
+to work. 
+
+[cpan]: http://www.cpan.org/
+[dzil]: http://dzil.org/
+[dzilgenehack]: https://metacpan.org/module/Dist::Zilla::PluginBundle::GENEHACK
+[modperbooks]: http://www.modernperlbooks.com/mt/
+[testclass]: https://metacpan.org/module/Test::Class
+[testclass1]: http://www.modernperlbooks.com/mt/2009/03/organizing-test-suites-with-testclass.html
+[testclass2]: http://www.modernperlbooks.com/mt/2009/03/reusing-test-code-with-testclass.html
+[testclass3]: http://www.modernperlbooks.com/mt/2009/03/making-your-testing-life-easier.html
+[testclass4]: http://www.modernperlbooks.com/mt/2009/03/using-test-control-methods-with-testclass.html
+[testclass5]: http://www.modernperlbooks.com/mt/2009/03/working-with-testclass-test-suites.html
