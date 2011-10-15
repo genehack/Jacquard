@@ -1,0 +1,326 @@
+Okay, we've got our tooling support built up so we can easily and
+quickly run tests -- time to do some Real Work!
+
+Before we start coding, it's usually helpful to think about what we're
+trying to do, and how best to break down the data involved in the
+problem. Since the point of Jacquard is to aggregate together multiple
+social networking sites (and RSS feeds, eventually), we're going to
+have a several types of objects in the system: we'll have User objects
+representing our users, Service objects representing the different
+types of social networks, Account objects that map between a Service
+and a particular User, and Post objects that represent the individual
+pieces of content on a particular service.
+
+Given that breakdown of the data model, one plan of attack is to first
+create the User class, get the basics of that working, then hook it
+into the web application layer. Generally speaking, I find that
+getting to the point where I can log in to the web application is a
+good stopping point.
+
+**N.b.:** I'm going to be borrowing _very_ heavily from
+[Nothingmuch's intro to using KiokuDB in Catalyst applications][kiokudb-with-cat]
+post here -- you may want to jump over and read that before
+continuing.
+
+So, the first thing to create is our user class in our data
+model. Following the conventions discussed in Nothingmuch's article,
+we'll call this class <code>Jacquard::Schema::User</code>:
+
+    package Jacquard::Schema::User;
+    # ABSTRACT: Jacquard users
+    use Moose;
+    with qw/ KiokuX::User /;  # provides 'id' and 'password' attributes
+    
+    # we're going to use this to map 'username' to the 'id' attr
+    use MooseX::Aliases;
+    
+    # and this is an easy way to verify we're getting a valid email
+    use MooseX::Types::Email qw/ EmailAddress /;
+
+    # these are a couple of helper classes that make Kioku easier to use
+    use KiokuDB::Set;
+    use KiokuDB::Util              qw/ set /;
+    
+    use namespace::autoclean;
+
+    # we want to have our username be our unique ID in Kioku
+    alias username => 'id';
+    
+    has email => (
+      isa      => EmailAddress ,
+      is       => 'ro' ,
+      required => 1 ,
+    );
+    
+    # this attribute is going to contain info about all the services
+    # this user has configured -- i.e., there will be one for Twitter,
+    # one for Facebook, etc.
+    has accounts => (
+      isa     => 'KiokuDB::Set',
+      is      => 'ro',
+      lazy    => 1 ,
+      default => sub { set() },
+    );
+    
+    __PACKAGE__->meta->make_immutable;    
+    1;
+
+To sanity check the basics that we've done so far, let's make a simple
+test class for Jacquard::Schema::User -- something like this:
+
+    package Test::Jacquard::Schema::User;
+    use strict;
+    use warnings;
+    
+    use parent 'Test::BASE'; # described in our last installment
+    
+    use Test::Most;
+    
+    use KiokuX::User::Util qw/ crypt_password /;
+    
+    use Jacquard::Schema::User;
+    
+    sub test_constructor :Tests(7) {
+      my $test = shift;
+  
+      my $user = Jacquard::Schema::User->new(
+        id       => 'user1' ,
+        email    => 'user1@example.com' ,
+        password => crypt_password( 'bad_password' ) ,
+      );
+    
+      isa_ok( $user , 'Jacquard::Schema::User' );
+    
+      is( $user->id       , 'user1'             , 'id' );
+      is( $user->username , 'user1'             , 'name delegated to id' );
+      is( $user->email    , 'user1@example.com' , 'email' );
+    
+      ok( $user->check_password( 'bad_password' ) , 'check password' );
+      ok( ! $user->check_password( 'wrong password' ), 'check wrong password' );
+    
+      is_deeply( [ $user->accounts->members ] , [] , 'no accounts' );
+    }
+
+What happens when we run that?
+
+    $ prove -lv
+    t/01-run.t .. # 
+    # Test::Jacquard::Schema::User->test_constructor
+    
+    1..7
+    ok 1 - The object isa Jacquard::Schema::User
+    ok 2 - id
+    ok 3 - name delegated to id
+    ok 4 - email
+    ok 5 - check password
+    ok 6 - check wrong password
+    ok 7 - no accounts
+    ok
+    All tests successful.
+    Files=1, Tests=7,  1 wallclock secs ( 0.02 usr  0.01 sys +  0.53 cusr  0.03 csys =  0.59 CPU)
+    Result: PASS
+
+It's important to note at this point that we don't have anything
+really KiokuDB-specific going on with in that class. Yes, we used a
+few Kioku-related helper classes, but that's just because we knew we
+were headed towards KiokuDB eventually. Those helpers could easily be
+replaced (or even removed, in a few cases), leaving behind a simple
+Moose class that describes a basic User object. In order to really
+hook this up to KiokuDB, our next step is make a Model class. This
+will allow our data objects to persist (i.e., we can save them to
+disk), and also provides a place to put helper methods that will
+abstract over complicated data storage operations. If you like, you
+can think of this as defining an API for our interactions with our
+persistent data. (Cooler people might call this a
+data storage DSL...) Here's an initial version of this Model class:
+
+    package Jacquard::Model::KiokuDB;
+    # ABSTRACT: KiokuX::Model wrapper for Jacquard
+    use Moose;
+    extends qw/ KiokuX::Model /;
+    
+    sub insert_user {
+      my( $self , $user ) = @_;
+    
+      my $id = $self->txn_do(sub {
+          $self->store( $user )
+      });
+    
+      return $id;
+    }
+    
+    __PACKAGE__->meta->make_immutable;
+    1;
+
+And of course, we need a test class too -- this one uses Kioku's
+ability to "store" things to memory, rather than a database, making it
+easier to set up the tests.
+
+    package Test::Jacquard::Model::KiokuDB;
+    use parent 'Test::BASE';
+    
+    use strict;
+    use warnings;
+    
+    use Test::Most;
+    
+    use Jacquard::Model::KiokuDB;
+    use Jacquard::Schema::User;
+    
+    use KiokuX::User::Util qw/ crypt_password /;
+    
+    sub fixtures :Tests(startup) {
+      my $test = shift;
+    
+      $test->{model} = Jacquard::Model::KiokuDB->new( dsn => 'hash' );
+    }
+    
+    sub test_insert_user :Tests(3) {
+      my $test = shift;
+      my $m    = $test->{model};
+    
+      {
+        my $s = $m->new_scope;
+    
+        my $id = $m->insert_user(
+          Jacquard::Schema::User->new(
+            id       => 'user1' ,
+            email    => 'user1@example.com' ,
+            password => crypt_password( 'bad_password' ) ,
+          ),
+        );
+    
+        ok( $id , 'got id' );
+    
+        my $user = $m->lookup( $id );
+    
+        isa_ok( $user , 'Jacquard::Schema::User' , 'looked up user' );
+        is( $user->username , 'user1' , 'expected name' );
+      }
+    }
+    
+    1;
+
+(Note how we're using the <code>Tests(startup)</code> method attribute
+on our <code>fixtures</code> method to ensure it runs before any of
+the test methods.)
+
+Running the test suite shows us that everything is working as we expect:
+
+    $ prove -lv
+    t/01-run.t .. # 
+    # Test::Jacquard::Model::KiokuDB->test_insert_user
+    
+    1..10
+    ok 1 - got id
+    ok 2 - looked up user isa Jacquard::Schema::User
+    ok 3 - expected name
+    # 
+    # Test::Jacquard::Schema::User->test_constructor
+    ok 4 - The object isa Jacquard::Schema::User
+    ok 5 - id
+    ok 6 - name delegated to id
+    ok 7 - email
+    ok 8 - check password
+    ok 9 - check wrong password
+    ok 10 - no accounts
+    ok
+    All tests successful.
+    Files=1, Tests=10,  2 wallclock secs ( 0.03 usr  0.01 sys +  1.19 cusr  0.06 csys =  1.29 CPU)
+    Result: PASS
+
+Before we create our [Catalyst][catalyst] application and hook up the
+authentication bits to our model/schema code, let's write a little
+helper utility to create a user. That will make our interactive
+testing of the web application a little bit easier. We'll use SQLite
+as the underlying storage engine for the moment; if and when this
+gets rolled out to more people, we'd want to change that up to
+something with a bit more power (e.g., by swapping Postgres in for
+SQLite, or, if we want to hop the NoSQL train, by switching over to
+CouchDB).
+
+First, a configuration file, so we don't have to hardcode the database
+connection details. This goes in <code>jacquard.yaml</code>:
+
+    ---
+    Model::KiokuDB:
+      dsn: dbi:SQLite:dbname=db/jacquard.db
+    
+(Down the road, we'll add the Catalyst application configuration to
+this file too.)
+
+Next up, the helper script. This needs to load up the config, prompt
+for needed info, create a Jacquard::Schema::User object using that
+info, instantiate a KiokuDB connection with
+<code>Jacquard::Model::KiokuDB</code>, and use the
+<code>insert_user</code> method to store the object in the
+database. This will live in <code>script/create_user</code>:
+
+    #! /opt/perl/bin/perl
+    
+    use strict;
+    use warnings;
+    use 5.010;
+    
+    use FindBin;
+    use lib "$FindBin::Bin/../lib";
+    
+    use Jacquard::Model::KiokuDB;
+    use Jacquard::Schema::User;
+    use KiokuX::User::Util         qw/ crypt_password /;
+    use YAML                       qw/ LoadFile       /;
+    
+    my $dsn = parse_config_file();
+    
+    my( $username , $email , $password ) = prompt_for_info();
+    
+    my $user = Jacquard::Schema::User->new(
+      username => $username ,
+      email    => $email ,
+      password => crypt_password( $password ),
+    );
+    
+    # create => 1 makes it create DB tables if needed
+    my $m = Jacquard::Model::KiokuDB->connect( $dsn , create => 1 );
+    {
+      my $s  = $m->new_scope;
+      my $id = $m->insert_user( $user );
+    
+      say "STORED USER ID '$id'";
+    }
+    
+    # config file parsing and info prompting details elided; if you're
+    # really interested, the code is on Github... 
+
+If we wanted to get really fancy, we could make this take command
+line flags for the needed information -- and it should probably not
+echo the password back to the screen, and should handle the exception
+that's going to be thrown if the email address isn't properly formed,
+or if the username already exists -- but that can all be added down
+the road. For the moment, we just need to get a User object saved in
+the database so we have something to authenticate against...
+
+So, we run this to create a test user:
+
+    $ ./script/create-user 
+    USERNAME? test
+    EMAIL? test@example.com
+    PASSWORD? bad
+    STORED USER ID 'user:test'
+
+At this point, it's worth pausing for a few minutes and using the
+SQLite tool to poke around inside the database that's been created for
+you in <code>db/jaquard.db</code>.  Since this is already a long post
+and one of the overarching points of this series is that KiokuDB means
+you don't _need_ to worry about how your stuff lives on disk, I'm not
+going to show that here. And since this post is indeed _extra_ long
+already, we're going to leave the "hook this stuff up to
+[Catalyst][catalyst]" bits for the next installment.
+
+[Jacquard][jacquardgithub] is available on Github. Patches welcome.
+
+
+[catalyst]: http://www.catalystframework.org/
+[jacquardgithub]: https://github.com/genehack/Jacquard
+[kiokudb-with-cat]: http://blog.woobling.org/2009/05/using-kiokudb-in-catalyst-applications.html
+[statusskein]: http://github.com/genehack/app-status-skein

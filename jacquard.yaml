@@ -1,0 +1,5 @@
+---
+Model::KiokuDB:
+  dsn: dbi:SQLite:dbname=db/jacquard.db
+  extra_args:
+    create: 1
