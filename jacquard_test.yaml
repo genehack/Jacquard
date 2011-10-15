@@ -1,0 +1,12 @@
+---
+Plugin::Authentication:
+  default:
+    credential:
+      class: Password
+      password_field: password
+      password_type: clear
+    store:
+      class: Minimal
+      users:
+        test_user:
+          password: 'test_password'

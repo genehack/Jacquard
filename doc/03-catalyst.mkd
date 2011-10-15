@@ -1,0 +1,283 @@
+In the [last installment][lastinstallment], we created
+<code>Jacquard::Schema::User</code> to describe a Jacquard user, and
+used <code>Jacquand::Model::KiokuDB</code> (and a helper script) to
+persist User objects to storage. This time around, we're going to
+create our [Catalyst][catalyst] app and hook up authentication. 
+
+So, first step: create the Catalyst application. The
+<code>catalyst.pl</code> helper makes this trivial:
+
+<pre class="brush:perl">
+$ catalyst.pl Jacquard::Web
+created "Jacquard-Web"
+created "Jacquard-Web/script"
+created "Jacquard-Web/lib"
+created "Jacquard-Web/root"
+[ couple dozen more lines elided ]
+</pre>
+    
+Unfortunately, there's no easy way to tell it "I'm creating this Cat
+app as a part of a bigger project" -- so after creating it, you have
+to manually shuffle the files around to get them into the right
+place. The Catalyst files also come with quite a bit of templated
+stuff in them that we don't need (POD skeletons and the like), so
+cleaning that up and getting the code into line with your personal
+coding style should be done at this point. Once that's all done,
+checkpointing into revision control is a good idea:
+
+<pre class="brush:plain">
+$ git ci -m"Create Catalyst application" 
+[03-catalyst 3c20771] Create Catalyst application
+ 11 files changed, 300 insertions(+), 0 deletions(-)
+ create mode 100755 jacquard_web.psgi
+ create mode 100644 lib/Jacquard/Web.pm
+ create mode 100644 lib/Jacquard/Web/Controller/Root.pm
+ create mode 100644 root/favicon.ico
+ create mode 100644 root/static/images/btn_88x31_built.png
+ create mode 100755 script/jacquard_web_cgi.pl
+ create mode 100755 script/jacquard_web_create.pl
+ create mode 100755 script/jacquard_web_fastcgi.pl
+ create mode 100755 script/jacquard_web_server.pl
+ create mode 100755 script/jacquard_web_test.pl
+</pre>
+
+Next, we're going to use [CatalystX::SimpleLogin][simplelogin] to add
+authentication to the application, following the outline in
+[the manual][simpleloginmanual]. First up, add a number of plugins to
+the application (in <code>lib/Jacquard/Web.pm</code>):
+
+<pre class="brush:perl">
+use Catalyst qw/
+    -Debug
+    ConfigLoader
+    +CatalystX::SimpleLogin
+    Authentication
+    Session
+    Session::Store::File
+    Session::State::Cookie
+    Static::Simple
+/;
+</pre>
+
+Create a default View class by running:
+
+<pre class="brush:plain">
+./script/jacquard_web_create.pl view TT TT
+</pre>
+    
+Then create the Catalyst Model class that will wrap
+<code>Jacquard::Model::KiokuDB</code>: 
+
+<pre class="brush:perl">
+package Jacquard::Web::Model::KiokuDB;
+use Moose;
+
+use Jacquard::Model::KiokuDB;
+
+BEGIN { extends qw(Catalyst::Model::KiokuDB) }
+
+has '+model_args'  => ( default => sub { { extra_args => { create => 1 }}});
+has '+model_class' => ( default => 'Jacquard::Model::KiokuDB' );
+
+__PACKAGE__->meta->make_immutable;
+1;
+</pre>
+
+We also need to add the configuration for these plugins to the
+application config file:
+
+<pre class="brush:plain">
+---
+name: Jacquard::Web
+Model::KiokuDB:
+  dsn: dbi:SQLite:dbname=db/jacquard.db
+Plugin::Authentication:
+  default:
+    credential:
+      class: Password
+      password_type: self_check
+    store:
+      class: Model::KiokuDB
+      model_name: kiokudb
+</pre>
+
+Finally, we can add a method requiring authentication to the root
+Controller (which is at
+<code>lib/Jacquard/Web/Controller/Root.pm</code>):
+
+<pre class="brush:perl">
+sub hello_user :Local :Does('NeedsLogin') {
+  my( $self , $c ) = @_;
+
+  my $name = $c->user->id;
+
+  $c->response->body( "<h2>Hello, $name!</h2>" );
+}
+</pre>
+
+(Don't forget that you need to change the parent class of the
+controller as well:
+
+<pre class="brush:perl">
+BEGIN { extends 'Catalyst::Controller::ActionRole' }
+</pre>
+
+If things aren't working, make sure you didn't forget this.)
+
+With all this in place, you should be able to start up the
+application, by either running
+<code>./script/jacquard\_web\_server.pl</code> or, if you want to get
+all Plack-y and modern, <code>plackup jacquard\_web.psgi</code>, and
+then browse to the URL the server reports it's running on. You should
+see the Catalyst welcome page at that point. Add '/hello\_user' to the
+end of the URL, and you should get prompted for a username and
+password. Assuming you created an account using the helper script from
+the [last installment][lastinstallment], you should be able to give
+those same values and see a page that says 'Hello' and your test
+account username. 
+
+Now, are we done? Not quite, as we don't have any tests of the
+authentication code! The following goes in
+<code>t/lib/Test/Jacquard/Web/Controller/Root.pm</code>: 
+
+<pre class="brush:perl">
+package Test::Jacquard::Web::Controller::Root;
+use parent 'Test::BASE';
+
+use strict;
+use warnings;
+
+use Test::Most;
+use Test::WWW::Mechanize::Catalyst;
+
+sub fixtures :Tests(startup) {
+  my $test = shift;
+
+  # load test config
+  $ENV{CATALYST_CONFIG_LOCAL_SUFFIX} = 'test';
+
+  $test->{mech} = Test::WWW::Mechanize::Catalyst->new( catalyst_app => 'Jacquard::Web' );
+}
+
+sub auth_test :Tests() {
+  my $test = shift;
+  my $mech = $test->{mech};
+
+  $mech->get_ok( '/' , 'basic request works' );
+  is( $mech->uri->path , '/' , 'at top page' );
+
+  $mech->get_ok( '/hello_user' , 'request hello_user' );
+  is( $mech->uri->path , '/login' , 'redirect to login' );
+
+  $mech->submit_form_ok({
+    form_id => 'login_form' ,
+    fields  => {
+      username => 'test_user' ,
+      password => 'test_password' ,
+    } ,
+    button => 'submit' ,
+  } , 'login' );
+
+  is( $mech->uri->path , '/hello_user' , 'redirect to /hello_user' );
+  $mech->text_contains( 'Hello, test_user!' , 'see expected greeting' );
+
+  $mech->get_ok( '/' , 'basic request works' );
+  is( $mech->uri->path , '/' , 'at home page' );
+
+  $mech->get_ok( '/hello_user' , 'request hello_user' );
+  is( $mech->uri->path , '/hello_user' , 'go directly to hello_user' );
+  $mech->text_contains( 'Hello, test_user!' , 'still see expected greeting' );
+
+  $mech->get_ok( '/logout' );
+  is( $mech->uri->path , '/' , 'back at home page' );
+
+  $mech->get_ok( '/hello_user' , 'request hello_user' );
+  is( $mech->uri->path , '/login' , 'redirect to login' );
+}
+
+
+1;
+</pre>
+
+If you're not familiar with [Test::Class-style
+testing][testclass], you should review the links I gave in [the
+post on the Jacquard project infrastructure][infrastructure]. Even if you're not that versed in Test::Class, hopefully the sequence above is fairly self-explanatory: we try to access a restricted URL, verify we get bounced to the login URL, then fill out and submit the login form, and verify we get re-directed to the original request. Following that, we logout and verify that we're once again unable to get to the restricted resource. Fairly simple. 
+
+In order to make this work, we need a distinct application config for
+testing, one that defines a test user and password for us. Catalyst, of course, provides a way to do this -- that's what that line that sets the <code>CATALYST\_CONFIG\_LOCAL\_SUFFIX</code>
+environment variable is about. The testing config goes into
+<code>jacquard\_test.yaml</code>, and looks like this:
+
+<pre class="brush:plain">
+---
+Plugin::Authentication:
+  default:
+    credential:
+      class: Password
+      password_field: password
+      password_type: clear
+    store:
+      class: Minimal
+      users:
+        test_user:
+          password: 'test_password'
+</pre>
+
+With that test file and test config in place, we can run the tests:
+
+<pre class="brush:plain">
+$ prove -l -I./t/lib ./t/lib/Test/Jacquard/Web/Controller/Root.pm -v
+./t/lib/Test/Jacquard/Web/Controller/Root.pm .. # 
+# Test::Jacquard::Web::Controller::Root->auth_test
+
+ok 1 - basic request works
+ok 2 - at top page
+ok 3 - request hello_user
+ok 4 - redirect to login
+ok 5 - login
+ok 6 - redirect to /hello_user
+ok 7 - see expected greeting
+ok 8 - basic request works
+ok 9 - at home page
+ok 10 - request hello_user
+ok 11 - go directly to hello_user
+ok 12 - still see expected greeting
+ok 13 - GET /logout
+ok 14 - back at home page
+ok 15 - request hello_user
+ok 16 - redirect to login
+1..16
+ok
+All tests successful.
+Files=1, Tests=16,  4 wallclock secs ( 0.04 usr  0.00 sys +  3.67 cusr  0.20 csys =  3.91 CPU)
+Result: PASS
+</pre>
+
+and verify they pass. This is also a good point to rerun the whole
+test suite: 
+
+<pre class="brush:plain">
+$ prove -l
+t/01-run.t .. ok    
+All tests successful.
+Files=1, Tests=26,  6 wallclock secs ( 0.03 usr  0.01 sys +  4.16 cusr  0.27 csys =  4.47 CPU)
+Result: PASS
+</pre>
+
+So, at this point, we have a basic data model (which only models users --
+but that's about to change!), a KiokuDB-based persistence framework,
+and we've got all that hooked into a Catalyst-based web application
+and can use the info in our User object to authenticate to the web
+app. Sounds like a good place to take a break! In our next
+installment, we'll pull back from the coding just a bit and think about the best way to structure the data involved in the services we're going to connect to, and the posts we're going to read and write to those connections. 
+
+As always, the code for [Jacquard][jacquardgithub] is available on
+Github. Patches are welcome; share and enjoy.
+
+[catalyst]: http://www.catalystframework.org/
+[infrastructure]: http://genehack.org/2011/10/setting_up_the_jacquard_project_infrastructure/
+[jacquardgithub]: https://github.com/genehack/Jacquard
+[lastinstallment]: http://genehack.org/2011/10/setting_up_jacquard_users
+[simplelogin]: https://metacpan.org/release/CatalystX-SimpleLogin
+[simpleloginmanual]: https://metacpan.org/module/CatalystX::SimpleLogin::Manual
+[testclass]: https://metacpan.org/module/Test::Class
