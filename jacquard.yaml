@@ -1,5 +1,12 @@
 ---
+name: Jacquard::Web
 Model::KiokuDB:
   dsn: dbi:SQLite:dbname=db/jacquard.db
-  extra_args:
-    create: 1
+Plugin::Authentication:
+  default:
+    credential:
+      class: Password
+      password_type: self_check
+    store:
+      class: Model::KiokuDB
+      model_name: kiokudb
