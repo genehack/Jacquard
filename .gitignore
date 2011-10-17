@@ -1,0 +1,5 @@
+.build
+db
+tmp
+Jacquard-*
+!releases/*.tar.gz
