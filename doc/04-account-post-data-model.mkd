@@ -1,0 +1,221 @@
+Since our previous installment got us
+[users and authentication][lastinstallment], we're ready to start
+adding support for various services. One of the features of Jacquard
+-- one of the main _points_ of Jacquard, actually -- is interacting
+with multiple services. To make that possible, we've included the
+<code>accounts</code> attribute in our User class:
+
+<pre class="brush:perl">
+# this attribute is going to contain info about all the services
+# this user has configured -- i.e., there will be one for Twitter,
+# one for Facebook, etc.
+has accounts => (
+  isa     => 'KiokuDB::Set',
+  is      => 'ro',
+  lazy    => 1 ,
+  default => sub { set() },
+);
+</pre>
+
+Before we start actually writing the code for the things that are
+going to be inside those `accounts` attributes, it's worth stepping
+back and thinking about what the data we want to store looks like,
+and how we can best structure our classes to help us manipulate that
+data.
+
+Ideally, what we want -- and again, this is a reflection of the
+underlying _raison d'etre_ of Jacquard -- is to be able to interact
+with all the different services we support in the same way without
+having to worry how each individual service handles fetching new
+posts, or writing a new post out. In other words, to be able to do
+something like this:
+
+<pre class="brush:perl">
+# warning: pseudocode
+foreach my $account ( $self->accounts->members ) {
+  $account->get_new_posts;
+}
+
+# or even
+my $new_post = get_new_post_from_user();
+foreach my $account ( $self->accounts->members ) {
+  $account->post( $new_post )
+}
+</pre>
+
+
+Since we're using [Moose][moose], we're going to have a number of
+`Jacquard::Schema::Account::FOO` classes, one for each type of service
+we're going to interact with. Each of those classes will consume an
+API-defining role (called something like
+`Jacquard::Schema::Role::AccountAPI`) that will define the required
+methods for the common interface we want all services to have -- that
+is, making sure they support a `get_new_posts` method, and a `post`
+method, and so forth.
+
+We also need to think about how to structure the other data associated
+with services. That data will fall into two broad categories: account
+information (and similar data, like authentication tokens, etc.) and
+posts on that service. Depending on the exact service, the details of
+what a 'post' is will differ -- a tweet is not quite a FaceBook post,
+and both are very distinct from a blog post entry in an Atom feed --
+but they share enough commonalities that we can again take a similar
+approach: a number of `Jacquard::Schema::Post::FOO` classes, each
+consuming a `Jacquard::Schema::Role::PostAPI` role that ensures that
+they're implementing a common API.
+
+The benefit of this approach is that it becomes relatively trivial to
+add support for new services -- particularly if there's already a
+module on [CPAN][cpan] to handle interacting with that service. As
+we'll see in a number of upcoming posts, taking an existing library
+and wrapping it in a layer of Moose class to implement a particular
+API is _very_ little work. 
+
+I often find it helpful, when I've gotten to this point in the process
+of designing something and I think have a workable solution, to work
+out how a small set of data would map across instances of these
+classes. Let's consider how a single Jacquard user, with a Twitter
+account configured within Jacquard, would look once a few tweets were
+stored:
+
+<pre class="brush:perl">
+# first, the user
+my $user = Jacquard::Schema::User->new( name => 'Bob' );
+
+# then we add the account
+$user->add_account( 'Twitter' , %account_details );
+
+# and then we get the most recent posts
+$user->get_account( 'Twitter' )->get_new_posts();
+</pre>
+
+And for this design, this is the point where I realize I haven't
+really thought at all about how the individual `Post` objects will be
+associated with the `Account` object. The simplest way to do this
+would be for the `Account` classes to have a `posts` attribute, much
+like the `accounts` attribute in the `User` class:
+
+<pre class="brush:perl">
+has posts => (
+  isa     => 'KiokuDB::Set',
+  is      => 'ro',
+  lazy    => 1 ,
+  default => sub { set() },
+);
+</pre>
+
+Assuming that is how we go, after that `get_new_posts()` method above,
+we'd end up with the `accounts` attribute of `$user` containing a
+`KiokuDB::Set` object with a single member -- an instance of
+`Jacquard::Schema::Account::Twitter`. Inside that object, there would
+be another `KiokuDB::Set` object with a bunch of members, each one an
+instance of `Jacquard::Schema::Post::Twitter` corresponding to an
+individual tweet from this user's timeline (and having attributes like
+'author', 'content', 'datetime', 'id', and so on).
+
+That all seems to make a reasonable amount of sense -- but there's a
+looming problem. (If you've already spotted it, give yourself a pat on
+the back.) What happens when we add a second `User`, also with a
+Twitter account configured, and that user ends up following some of
+the same people on Twitter as our first user? We'll end up with `Post`
+objects that are essentially duplicates of each other -- but one copy
+will be inside the Twitter `Account` object of the first user, and the
+second will be inside the Twitter `Account` object of the second. In
+the long run, that's going to end up being a big waste of storage
+space and/or RAM. 
+
+How do we solve this problem? We _could_ just maintain a uniform set
+of `Post` objects, and include the same object into different
+`Account` objects as needed. That would solve the issue with the
+duplication of information -- but it introduces another issue, in that
+we no longer have a place to store per-user metadata about individual
+`Post` objects (e.g., read/unread status). 
+
+Instead, we'll solve this problem the old fashioned way: we'll
+introduce another layer of abstraction! Instead of the `posts`
+attribute of `Account` objects containing `Jacquard::Schema::Post`
+objects directly, we'll have a generic `Jacquard::Schema::UserPost`
+object that maps between a `User` account and a particular
+`Post`. In return for making our data model slightly more complicated,
+this approach gives us the best of both worlds, in that we have a place
+for per-`User` metadata to live, but the original `Post` data is only
+present in our system once, regardless of how many of our users have
+it present in their `Account` objects. 
+
+This solution also doesn't impact any of our previous design
+decisions: the `Jacquard::Schema::Role::PostAPI` can be consumed by
+the `Jacquard::Schema::UserPost` class too, via method delegation to
+the `Jacquard::Schema::Post::FOO` object it refers to. (More about
+that later.)
+
+So, now that we've been though a couple of rounds of thinking about
+the data structures, we can write some code, yes? Well, no, not
+exactly, not quite yet. Instead we're going to explore what the
+API for using this code might look like, and we're going to do _that_
+by writing some test code, or at least outlining some test cases. 
+
+First, we're going to need to be able to add `Account` objects to
+`User` objects, and `Post` objects to `Account` objects. The code for
+that will probably look something like:
+
+<pre class="brush:perl">
+## method to associate an Account object with a User
+# $model is an instance of Jacquard::Model::KiokuDB, 
+# while $user is a Jacquard::Schema::User, 
+# and $account->does('Jacquard::Schema::Role::AccountAPI')
+$model->add_account_to_user( $account , $user );
+
+## method to add a UserPost object to an Account -- will also save the
+## associated Post object if needed 
+# $model is an instance of Jacquard::Model::KiokuDB, 
+# while $account->does('Jacquard::Schema::Role::AccountAPI')
+# and $post->does('Jacquard::Schema::Role::PostAPI')
+$model->add_post_to_account( $userpost , $account );
+</pre>
+
+(Aside: I spent more time than I am willing to disclose trying to
+decide whether the order of arguments in those methods should be 'more
+generic object, more specific object', or if they should instead be
+the same as in the method name -- which is what I finally went with,
+reasoning that will serve as a mnemonic.)
+
+We'll also need to be able to remove `Account` objects from `User`
+objects, and modify `Post` and `UserPost` objects and save those
+changes:
+
+<pre class="brush:perl">
+## method to remove an Account object from a user
+# $model is an instance of Jacquard::Model::KiokuDB, 
+# while $account->does('Jacquard::Schema::Role::AccountAPI')
+# doesn't need a user object because $account has an 'owner' attribute
+$model->remove_account_from_user( $account );
+
+## method to store a modified Post or UserPost object, e.g. after
+## changing some of the metadata, or if the underlying post object is
+## updated
+# $model is an instance of Jacquard::Model::KiokuDB, 
+# while $post->does('Jacquard::Schema::Role::PostAPI')
+$model->update_post( $post );
+</pre>
+
+Those all look reasonable, at least at first glance. It's worth noting
+that none of the methods have an explicit return value -- they will
+just return true on success (and will likely eventually throw some
+sort of exception object on failure). This approach makes the most sense to me,
+as it is isolates the model to just marshaling objects to storage. Any
+modification or manipulation of the objects will happen elsewhere. 
+
+At this point, we've fleshed out the data model more, we have the
+beginnings of a plan for implementing the code that will let Jacquard
+interact with other services, and we have the outline for how we're
+going to store and update that data in KiokuDB once we have it. That
+seems like a good place to stop. Next time, we'll actually implement
+the first `Account` and `Post` classes! 
+
+As always, the code for [Jacquard][jacquardgithub] is available on
+Github. Patches are welcome; share and enjoy.
+
+[CPAN]: http://metacpan.org
+[jacquardgithub]: https://github.com/genehack/Jacquard
+[moose]: http://moose.iinteractive.com/
+[lastinstallment]: http://genehack.org/2011/11/setting_up_jacquard_authentication/

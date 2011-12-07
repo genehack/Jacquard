@@ -86,7 +86,7 @@ __PACKAGE__->meta->make_immutable;
 We also need to add the configuration for these plugins to the
 application config file:
 
-<pre class="brush:plain>
+<pre class="brush:plain">
 ---
 name: Jacquard::Web
 Model::KiokuDB:
@@ -105,7 +105,7 @@ Finally, we can add a method requiring authentication to the root
 Controller (which is at
 <code>lib/Jacquard/Web/Controller/Root.pm</code>):
 
-<pre class="brush:plain">
+<pre class="brush:perl">
 sub hello_user :Local :Does('NeedsLogin') {
   my( $self , $c ) = @_;
 
@@ -126,10 +126,10 @@ If things aren't working, make sure you didn't forget this.)
 
 With all this in place, you should be able to start up the
 application, by either running
-<code>./script/jacquard_web_server.pl</code> or, if you want to get
-all Plack-y and modern, <code>plackup jacquard_web.psgi</code>, and
+<code>./script/jacquard\_web\_server.pl</code> or, if you want to get
+all Plack-y and modern, <code>plackup jacquard\_web.psgi</code>, and
 then browse to the URL the server reports it's running on. You should
-see the Catalyst welcome page at that point. Add '/hello_user' to the
+see the Catalyst welcome page at that point. Add '/hello\_user' to the
 end of the URL, and you should get prompted for a username and
 password. Assuming you created an account using the helper script from
 the [last installment][lastinstallment], you should be able to give
@@ -199,11 +199,14 @@ sub auth_test :Tests() {
 1;
 </pre>
 
+If you're not familiar with [Test::Class-style
+testing][testclass], you should review the links I gave in [the
+post on the Jacquard project infrastructure][infrastructure]. Even if you're not that versed in Test::Class, hopefully the sequence above is fairly self-explanatory: we try to access a restricted URL, verify we get bounced to the login URL, then fill out and submit the login form, and verify we get re-directed to the original request. Following that, we logout and verify that we're once again unable to get to the restricted resource. Fairly simple. 
+
 In order to make this work, we need a distinct application config for
-testing. Catalyst, of course, provides a way to do this -- that's what
-that line that sets the <code>CATALYST_CONFIG_LOCAL_SUFFIX</code>
+testing, one that defines a test user and password for us. Catalyst, of course, provides a way to do this -- that's what that line that sets the <code>CATALYST\_CONFIG\_LOCAL\_SUFFIX</code>
 environment variable is about. The testing config goes into
-<code>jacquard_test.yaml</code>, and looks like this:
+<code>jacquard\_test.yaml</code>, and looks like this:
 
 <pre class="brush:plain">
 ---
@@ -266,13 +269,15 @@ but that's about to change!), a KiokuDB-based persistence framework,
 and we've got all that hooked into a Catalyst-based web application
 and can use the info in our User object to authenticate to the web
 app. Sounds like a good place to take a break! In our next
-installment, we'll add a Service class (or maybe two) to our data
-model, and extend the User class to allow us to add Account objects. 
+installment, we'll pull back from the coding just a bit and think about the best way to structure the data involved in the services we're going to connect to, and the posts we're going to read and write to those connections. 
 
 As always, the code for [Jacquard][jacquardgithub] is available on
 Github. Patches are welcome; share and enjoy.
 
+[catalyst]: http://www.catalystframework.org/
+[infrastructure]: http://genehack.org/2011/10/setting_up_the_jacquard_project_infrastructure/
 [jacquardgithub]: https://github.com/genehack/Jacquard
 [lastinstallment]: http://genehack.org/2011/10/setting_up_jacquard_users
 [simplelogin]: https://metacpan.org/release/CatalystX-SimpleLogin
 [simpleloginmanual]: https://metacpan.org/module/CatalystX::SimpleLogin::Manual
+[testclass]: https://metacpan.org/module/Test::Class
