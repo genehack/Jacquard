@@ -3,7 +3,8 @@ package Jacquard::Schema::User;
 use Moose;
 with qw/ KiokuX::User /;        # provides 'id' and 'password' attributes
 
-#use Jacquard::Schema::Account;
+use Class::Load                qw/ load_class /;
+use Jacquard::Schema::Account;
 use KiokuDB::Set;
 use KiokuDB::Util              qw/ set /;
 use MooseX::Aliases;
@@ -47,12 +48,17 @@ sub BUILDARGS {
 }
 
 sub add_account {
-  my( $self , $service ) = @_;
+  my( $self , $service , %options ) = @_;
 
-  my $account = Jacquard::Schema::Account->new(
-    user    => $self ,
-    service => $service ,
-  );
+  ### FIXME need real exceptions
+  try_load_class( "Jacquard::Schema::Account::$service" )
+    or die "Failed to load class for $service";
+
+  ### FIXME need real exceptions
+  my $account = "Jacquard::Schema::Account::$service"->new(
+    owner => $self ,
+    %options ,
+  ) or die "Failed to add $service account";
 
   $self->accounts->insert( $account );
 }
